@@ -1,0 +1,212 @@
+from openai import OpenAI
+import re, json
+import pandas as pd
+import sqlite3
+
+client = OpenAI(base_url="http://localhost:9916/v1", api_key="lm-studio")
+
+DB_FILE = "AF_PRISMA.db"
+TABLE_NAME = "results"
+
+def extract_json(text):
+    """Extract JSON from fenced ```json``` or fallback {..} block"""
+    pattern = re.compile(r'```json(.*?)```', re.DOTALL)
+    matches = pattern.findall(text)
+
+    if not matches:
+        brace_match = re.search(r'\{.*\}', text, re.DOTALL)
+        matches = [brace_match.group(0)] if brace_match else []
+
+    result = {}
+    for match in matches:
+        try:
+            result.update(json.loads(match.strip()))
+        except Exception as e:
+            print("JSON decode error:", e, "\nOffending text:", match[:200])
+            continue
+    return result if result else None
+
+
+def validate_dict(dct, text):
+    """Validate Quotes: keep only verbatim snippets that appear in Title/Abstract."""
+    candidates = []
+    if "Quotes" in dct and isinstance(dct["Quotes"], list):
+        candidates.extend(dct["Quotes"])
+    if "Descriptions" in dct and isinstance(dct["Descriptions"], list):
+        candidates.extend(dct["Descriptions"])
+
+    values = []
+    for value in candidates:
+        if isinstance(value, str) and value.strip() and value in text:
+            values.append(value)
+
+    return {"Descriptions": values}
+
+
+def process_row(row):
+    title = str(row.get('Title', '') or '')
+    abstract = str(row.get('Abstract Note', '') or '')
+    user_input = f"Title: {title}\n\nAbstract: {abstract if abstract else '(no abstract provided)'}"
+
+    completion = client.chat.completions.create(
+        model="model-identifier",
+        messages=[{
+            "role": "system",
+            "content": """You are a literature screening assistant for a PRISMA title/abstract pass.
+Respond ONLY with a strict JSON object, inside a fenced block that starts with ```json and ends with ```.
+
+Research Question:
+"What is known about the use of multimodal data to identify atrial fibrillation patients who are most likely to benefit from early treatment to prevent progression to persistent AF?"
+
+Definitions:
+- "Multimodal" = "Fusion" = use of ≥2 distinct sources of data together (e.g., ECG + imaging, ECG + biomarkers, EHR + device, sensors + clinical features).  
+- Not multimodal = using only one type of data (e.g., ECG-only model, CHA₂DS₂-VASc, clinical evaluation without additional data sources, using only clinical record data).
+
+Decision rules (apply to Title + Abstract only):
+
+- Status = "Include"  
+  Assign if the article clearly addresses ALL of the following:  
+  • Population: Adults with atrial fibrillation (any stage) or adults at risk of progression to persistent AF.  
+  • Focus: Risk stratification or prediction methods using multimodal data (fusion of ≥2 distinct data sources).  
+  • Outcome: Identification of patients at risk of progression to persistent AF OR evidence that early treatment (e.g., rhythm control, ablation, antiarrhythmic therapy) benefits those identified.  
+  Reasons must = ["AF + Multimodal + Progression/Early Treatment"].  
+  Example quotes that qualify:  
+  - "This study innovatively combines AF rhythm ECG signals with clinical characteristics to construct a deep learning model for predicting the recurrence risk in PeAF patients."  
+  - "The multimodal fusion model…outperforming any single-modal model, thereby underscoring the importance of multimodal fusion for improving prediction accuracy."  
+
+- Status = "Maybe"  
+  Assign if atrial fibrillation and risk stratification are central but EITHER multimodal use OR progression/early treatment is not clearly described.  
+  Reasons must be chosen from:  
+  • "AF + Multimodal but Progression/Treatment Unclear"  
+  • "AF + Risk Stratification but Multimodal Unclear"  
+  • "AF + Progression/Early Treatment but Multimodal Unclear"  
+  Example quotes that may qualify:  
+  - "AI-enabled ECG algorithms have been developed for predicting recurrence in PAF patients." (unclear if multimodal)  
+  - "Risk factors for AF progression were evaluated using clinical and demographic variables." (unclear if multimodal or treatment-related)  
+
+- Status = "Exclude"  
+  Assign if the article is clearly outside scope.  
+  Reasons must be chosen from:  
+  • "Not AF-Related"  
+  • "Not About Risk Stratification"  
+  • "Not Multimodal"  
+  • "Not About Progression/Early Treatment"  
+  Example quotes that disqualify:  
+  - "Outcomes of catheter ablation in ventricular tachycardia patients." (Not AF-Related)  
+  - "ECG-based detection of AF using a single deep learning model." (Not Multimodal)  
+  - "Descriptive imaging features of atrial fibrosis in AF patients." (Not About Risk Stratification)
+
+Return JSON with exactly these keys:
+- "Status": "Include" | "Exclude" | "Maybe"
+- "Reasons": array of one or more of the fixed reasons above (must never be empty)
+- "Quotes": array (2–5) of short verbatim snippets from the Title/Abstract that justify your Status/Reasons.  
+  • Quotes must never be empty.  
+  • For all cases, always copy 1–2 short verbatim phrases that clearly show what the study IS about (to justify why it is outside scope).  
+  • Do not paraphrase or invent text.- "Thinking": short free-text reasoning (1–3 sentences) explaining why you chose the Status/Reasons
+- "Confidence": float 0–1 for your confidence in the decision
+
+Output format (strict):
+```json
+{
+  "Status": "Include",
+  "Reasons": ["AF + Multimodal + Progression/Early Treatment"],
+  "Quotes": ["...quote1...", "...quote2..."],
+  "Thinking": "Short reasoning here.",
+  "Confidence": 0.87
+}
+```"""
+        },
+        {"role": "user", "content": user_input}],
+        temperature=0,
+        stop=["<｜User｜>", "<｜Assistant｜>"]
+    )
+
+    return completion.choices[0].message.content
+
+
+conn = sqlite3.connect(DB_FILE)
+df = pd.read_sql_query(f"""
+    SELECT rowid as _id, * FROM {TABLE_NAME}
+    WHERE 
+        (Include_Exclude_TA IS NULL OR Include_Exclude_TA = '') AND
+        (Reason_for_Exclusion_TA IS NULL OR Reason_for_Exclusion_TA = '') AND
+        (LLM_Rationale_TA IS NULL OR LLM_Rationale_TA = '') AND
+        (LLM_Thinking_TA IS NULL OR LLM_Thinking_TA = '') AND
+        (LLM_Confidence_TA IS NULL OR LLM_Confidence_TA = '')
+    """, conn)
+
+cursor = conn.cursor()
+for col in [
+    "Include_Exclude_TA",
+    "Reason_for_Exclusion_TA",
+    "LLM_Rationale_TA",
+    "LLM_Thinking_TA",
+    "LLM_Confidence_TA"
+]:
+    try:
+        cursor.execute(f"ALTER TABLE {TABLE_NAME} ADD COLUMN {col} TEXT")
+    except sqlite3.OperationalError:
+        pass
+conn.commit()
+
+for idx, row in df.iterrows():
+    print(f"[SCREEN] Processing row {idx + 1} of {len(df)}")
+
+    prediction = process_row(row)
+    print(f"RAW OUTPUT (row {idx+1}):\n{prediction[:500]}\n---")
+
+    try:
+        json_obj = extract_json(prediction)
+        if not json_obj:
+            raise ValueError("No valid JSON extracted")
+
+        print("Parsed JSON keys:", list(json_obj.keys()))
+
+        if not json_obj.get("Quotes"):
+            print("Quotes missing. Raw JSON:", prediction[:500])
+
+        raw_quotes = json_obj.get("Quotes", [])
+        if isinstance(raw_quotes, str):
+            raw_quotes = [raw_quotes]
+        rationale = " | ".join(q.strip() for q in raw_quotes if q.strip())
+
+        thinking = str(json_obj.get("Thinking", "")).strip()
+
+
+
+        status = json_obj.get("Status", "Maybe")
+        reasons = json_obj.get("Reasons", [])
+        confidence = json_obj.get("Confidence", 0.0)
+
+        reasons_joined = " | ".join(map(str, reasons)) if isinstance(reasons, list) else str(reasons)
+
+        try:
+            confidence = float(str(confidence).replace('"', '').strip())
+        except:
+            confidence = 0.0
+        confidence = max(0.0, min(1.0, confidence))
+
+        cursor.execute(f"""
+            UPDATE {TABLE_NAME}
+            SET Include_Exclude_TA = ?,
+                Reason_for_Exclusion_TA = ?,
+                LLM_Rationale_TA = ?,
+                LLM_Thinking_TA = ?,
+                LLM_Confidence_TA = ?
+            WHERE rowid = ?
+        """, (status, reasons_joined, rationale, thinking, confidence, row["_id"]))
+        conn.commit()
+
+        print("Decision:", status)
+        print("Reasons:", reasons_joined or "(none)")
+        print("Quotes:", rationale or "(none)")
+        print("Thinking:", thinking or "(none)")
+        print("Confidence:", confidence)
+
+    except Exception as e:
+        print("JSON parse/validation error:", e)
+
+    print("---------------------------------------------------")
+
+conn.close()
+print("Finished processing and saved results to SQLite.")
