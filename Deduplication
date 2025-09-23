@@ -1,0 +1,100 @@
+import pandas as pd
+from rapidfuzz import fuzz
+
+df = pd.read_excel("used to dedup.xlsx")
+
+df["DOI_norm"] = (
+    df["DOI"]
+    .astype(str)
+    .str.lower()
+    .str.replace(r"https?://doi.org/", "", regex=True)
+    .str.replace("doi:", "", regex=True)
+    .str.strip()
+)
+df.loc[df["DOI_norm"].isin(["", "nan"]), "DOI_norm"] = pd.NA
+
+def pick_best(group):
+    filled_counts = group.notna().sum(axis=1)
+    return group.loc[filled_counts.idxmax()]
+
+log = []
+
+deduped = (
+    df.groupby("DOI_norm", dropna=False, group_keys=False)
+    .apply(lambda g: pick_best(g))
+)
+
+for doi, group in df.groupby("DOI_norm", dropna=False):
+    if pd.notna(doi) and len(group) > 1:
+        filled_counts = group.notna().sum(axis=1)
+        best_idx = filled_counts.idxmax()
+        for idx in group.index:
+            if idx != best_idx:
+                log.append({
+                    "Reason": "DOI match",
+                    "Kept_Index": best_idx,
+                    "Kept_Key": df.loc[best_idx, "Key"],
+                    "Kept_Title": str(df.loc[best_idx, "Title"])[:50],
+                    "Dropped_Index": idx,
+                    "Dropped_Key": df.loc[idx, "Key"],
+                    "Dropped_Title": str(df.loc[idx, "Title"])[:50],
+                    "Similarity": "DOI match"
+                })
+
+df = deduped.copy()
+
+df["Title_norm"] = (
+    df["Title"]
+    .astype(str)
+    .str.lower()
+    .str.replace(r"[^\w\s]", " ", regex=True)
+    .str.replace(r"\s+", " ", regex=True)
+    .str.strip()
+)
+
+df["FirstAuthor_norm"] = (
+    df["Author"]
+    .astype(str)
+    .str.split(";|,|&| and ", n=1, expand=True)[0]
+    .str.lower()
+    .str.strip()
+)
+
+df["Year_norm"] = df["Publication Year"].astype(str).replace("nan", "")
+
+df["Composite"] = df["Title_norm"] + " " + df["FirstAuthor_norm"] + " " + df["Year_norm"]
+
+to_drop = set()
+candidates = df[df["DOI_norm"].isna()].copy()
+
+for i, row in candidates.iterrows():
+    if i in to_drop:
+        continue
+    for j, other in candidates.iterrows():
+        if j <= i or j in to_drop:
+            continue
+        sim = fuzz.token_set_ratio(row["Composite"], other["Composite"])
+        if sim >= 90:
+            g = df.loc[[i, j]]
+            filled_counts = g.notna().sum(axis=1)
+            best_idx = filled_counts.idxmax()
+            drop_idx = j if best_idx == i else i
+            to_drop.add(drop_idx)
+            log.append({
+                "Reason": "Composite match",
+                "Kept_Index": best_idx,
+                "Kept_Key": df.loc[best_idx, "Key"],
+                "Kept_Title": str(df.loc[best_idx, "Title"])[:50],
+                "Dropped_Index": drop_idx,
+                "Dropped_Key": df.loc[drop_idx, "Key"],
+                "Dropped_Title": str(df.loc[drop_idx, "Title"])[:50],
+                "Similarity": sim
+            })
+
+df_final = df.drop(index=to_drop)
+
+original_cols = list(pd.read_excel("used to dedup.xlsx", nrows=0).columns)
+df_final[original_cols].to_excel("deduplicated.xlsx", index=False)
+
+log_df = pd.DataFrame(log)
+log_df.to_excel("dedup_log.xlsx", index=False)
