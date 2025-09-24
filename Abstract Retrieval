@@ -1,0 +1,189 @@
+const USER_AGENT = "SheetsAbstractFiller/1.0 (contact: you@example.com)";
+const SLEEP_MS = 300;
+const CACHE_MINUTES = 1440;
+
+function normDoi_(s) {
+  if (!s) return "";
+  s = s.toString().trim();
+  s = s.replace(/^https?:\/\/(dx\.)?doi\.org\//i, ""); 
+  return s.toLowerCase();
+}
+function sameDoi_(a, b) { return normDoi_(a) && normDoi_(a) === normDoi_(b); }
+
+function httpGetJson_(url, params = {}) {
+  const q = Object.entries(params).map(([k,v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join("&");
+  const full = q ? `${url}?${q}` : url;
+  const resp = UrlFetchApp.fetch(full, {
+    method: "get", muteHttpExceptions: true,
+    headers: {"User-Agent": USER_AGENT, "Accept": "application/json"}
+  });
+  if (resp.getResponseCode() !== 200) return null;
+  try { return JSON.parse(resp.getContentText()); } catch(e) { return null; }
+}
+function cleanText_(txt) {
+  if (!txt) return "";
+  txt = txt.replace(/&lt;/g,"<").replace(/&gt;/g,">").replace(/&amp;/g,"&");
+  txt = txt.replace(/<\/?[^>]+>/g," ");
+  return txt.replace(/\s+/g," ").trim();
+}
+function sleep_(){ Utilities.sleep(SLEEP_MS); }
+function cacheGet_(k){ return CacheService.getDocumentCache().get(k); }
+function cachePut_(k,v){ CacheService.getDocumentCache().put(k,v,CACHE_MINUTES*60); }
+function cacheDel_(k){ CacheService.getDocumentCache().remove(k); }
+
+function isLikelyAbstract_(txt) {
+  if (!txt) return false;
+  if (txt.length < 30) return false;
+  if (!txt.includes(".")) return false;
+  const junk = ["cookie","subscribe","terms","privacy","sign in","reprints","permissions"];
+  const lower = txt.toLowerCase();
+  for (let j of junk) {
+    if (lower.includes(j)) return false;
+  }
+  return true;
+}
+
+
+function fetchCrossrefStrict_(doi) {
+  const j = httpGetJson_("https://api.crossref.org/works/" + encodeURIComponent(doi));
+  sleep_();
+  if (!j || !j.message) return null;
+  const apiDoi = j.message.DOI || "";
+  if (!sameDoi_(doi, apiDoi)) return null;
+  const abs = j.message.abstract;
+  return abs ? cleanText_(abs) : null;
+}
+
+function fetchPubMedStrict_(doi) {
+  const s = httpGetJson_("https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi",
+    {db:"pubmed", term:doi, retmode:"json"});
+  sleep_();
+  const ids = s && s.esearchresult && s.esearchresult.idlist || [];
+  if (!ids.length) return null;
+  const pmid = ids[0];
+  const xml = UrlFetchApp.fetch(
+    "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pubmed&id="+encodeURIComponent(pmid)+"&retmode=xml",
+    {headers: {"User-Agent": USER_AGENT}}
+  ).getContentText();
+  sleep_();
+  const doiMatch = xml.match(/<ArticleId IdType="doi">([\s\S]*?)<\/ArticleId>/i);
+  if (!doiMatch || !sameDoi_(doi, doiMatch[1])) return null;
+  const absMatch = xml.match(/<Abstract>([\s\S]*?)<\/Abstract>/i);
+  return absMatch ? cleanText_(absMatch[1]) : null;
+}
+
+function fetchOpenAlexStrict_(doi) {
+  const j = httpGetJson_("https://api.openalex.org/works/https://doi.org/" + encodeURIComponent(doi));
+  sleep_();
+  if (!j) return null;
+  const apiDoi = j.doi || j.ids && j.ids.doi || "";
+  if (!sameDoi_(doi, apiDoi)) return null;
+  if (j.abstract_inverted_index) {
+    const inv = j.abstract_inverted_index;
+    const pos = {};
+    Object.keys(inv).forEach(w => inv[w].forEach(p => pos[p]=w));
+    const text = Array.from({length: Math.max(...Object.keys(pos).map(k=>+k))+1}, (_,i)=>pos[i]||"").join(" ");
+    return cleanText_(text);
+  }
+  return j.abstract ? cleanText_(j.abstract) : null;
+}
+
+function fetchSemanticScholarStrict_(doi) {
+  const j = httpGetJson_("https://api.semanticscholar.org/graph/v1/paper/DOI:" + encodeURIComponent(doi),
+    {fields:"abstract,doi"});
+  sleep_();
+  if (!j) return null;
+  const apiDoi = j.doi || "";
+  if (!sameDoi_(doi, apiDoi)) return null;
+  return j.abstract ? cleanText_(j.abstract) : null;
+}
+
+function fetchEuropePMCStrict_(doi) {
+  const j = httpGetJson_("https://www.ebi.ac.uk/europepmc/webservices/rest/search",
+    {query: 'DOI:"' + doi + '"', format:"json"});
+  sleep_();
+  if (!j || !j.resultList || !j.resultList.result || !j.resultList.result.length) return null;
+  const r = j.resultList.result[0];
+  const apiDoi = r.doi || "";
+  if (!sameDoi_(doi, apiDoi)) return null;
+  return r.abstractText ? cleanText_(r.abstractText) : null;
+}
+
+function fetchAbstractStrictByDoi_(doi) {
+  if (!doi) return "";
+  doi = normDoi_(doi);
+  const tries = [
+    () => fetchCrossrefStrict_(doi),
+    () => fetchPubMedStrict_(doi),
+    () => fetchOpenAlexStrict_(doi),
+    () => fetchSemanticScholarStrict_(doi),
+    () => fetchEuropePMCStrict_(doi),
+  ];
+  for (let i=0;i<tries.length;i++){
+    try {
+      const t = tries[i]();
+      if (isLikelyAbstract_(t)) return t;
+    } catch(e) {}
+  }
+  return "";
+}
+
+function ABSTRACT_BY_DOI(doi) {
+  doi = (doi||"").toString().trim();
+  if (!doi) return "";
+  const key = "ABSSTRICT::" + normDoi_(doi);
+  const cached = cacheGet_(key);
+  if (cached !== null) return cached;
+  const out = fetchAbstractStrictByDoi_(doi) || "";
+  cachePut_(key, out);
+  return out;
+}
+
+function onOpen(){
+  SpreadsheetApp.getUi().createMenu("Abstract Tools")
+    .addItem("Fill Empty Abstracts (DOI-strict)", "bulkFillEmptyAbstracts_")
+    .addToUi();
+}
+
+function bulkFillEmptyAbstracts_(){
+  const sh = SpreadsheetApp.getActiveSheet();
+  const rg = sh.getActiveRange(); 
+  const r0 = rg.getRow(); 
+  const n = rg.getNumRows();
+  
+  for (let i=0;i<n;i++){
+    const row = r0+i;
+
+    const doi = (sh.getRange(row,9).getValue()||"").toString().trim();
+    if (!doi) continue;
+
+    const absCell = sh.getRange(row,11);
+    const existingAbs = (absCell.getValue()||"").toString().trim();
+    if (existingAbs) continue;
+
+    absCell.setValue("[Fetching…]");
+    SpreadsheetApp.flush();      
+    Utilities.sleep(300);        
+
+    const key = "ABSSTRICT::" + normDoi_(doi);
+    let abs = cacheGet_(key);
+    if (!abs) {
+      abs = fetchAbstractStrictByDoi_(doi);
+      if (isLikelyAbstract_(abs)) {
+        cachePut_(key, abs);
+      } else {
+        cachePut_(key, "");
+        abs = "";
+      }
+    }
+
+    if (isLikelyAbstract_(abs)) {
+      absCell.setValue(abs);
+    } else {
+      absCell.setValue(""); 
+    }
+
+    Utilities.sleep(100);
+  }
+  SpreadsheetApp.getUi().alert("Filling empty abstracts complete.");
+}
