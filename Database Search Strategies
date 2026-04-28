@@ -1,0 +1,66 @@
+A.	PUBMED/MEDLINE
+
+Date searched: September 14, 2025
+
+Search query: 
+(("Atrial Fibrillation"[Mesh] OR atrial fibrillation[tiab] OR AF[tiab]) 
+ AND 
+(persistent[tiab] OR persistence[tiab] OR "Disease Progression"[Mesh] OR progress*[tiab] OR remodel*[tiab] OR chronic[tiab]) 
+ AND 
+(multimodal*[tiab] OR multi-modal[tiab] OR multisource[tiab] OR "multi source"[tiab] OR integrat*[tiab] OR combined[tiab] OR fusion[tiab] 
+ OR "risk stratification"[tiab] OR "Risk Assessment"[Mesh] OR "prediction model*"[tiab] OR "prognostic model*"[tiab] OR prognos*[tiab] 
+ OR screen*[tiab] OR classification[tiab] OR scoring[tiab] OR "decision support"[tiab] OR "Clinical Decision-Making"[Mesh] 
+ OR "machine learning"[tiab] OR "artificial intelligence"[tiab] OR "Artificial Intelligence"[Mesh] OR "data-driven"[tiab] OR algorithm*[tiab]) 
+ AND 
+(ECG[tiab] OR electrocardiograph*[tiab] OR "Electrocardiography"[Mesh] OR echocardiograph*[tiab] OR "Echocardiography"[Mesh] 
+ OR MRI[tiab] OR "Magnetic Resonance Imaging"[Mesh] OR CT[tiab] OR "Tomography, X-Ray Computed"[Mesh] OR "cardiac imaging"[tiab] 
+ OR "Imaging"[Mesh] OR biomarker*[tiab] OR "Biological Markers"[Mesh] OR BNP[tiab] OR NT-proBNP[tiab] OR troponin*[tiab] 
+ OR proteomic*[tiab] OR metabolomic*[tiab] OR genomic*[tiab] OR transcriptomic*[tiab] OR "electronic health record*"[tiab] OR EHR[tiab] 
+ OR "Medical Records Systems, Computerized"[Mesh] OR administrative[tiab] OR claims[tiab] OR registry[tiab] OR device[tiab] 
+ OR pacemaker*[tiab] OR defibrillator*[tiab] OR CIED[tiab] OR "Pacemaker, Artificial"[Mesh] OR "Defibrillators, Implantable"[Mesh] 
+ OR "cardiac implantable electronic device*"[tiab] OR wearable*[tiab] OR sensor*[tiab] OR "mobile health"[tiab] OR mHealth[tiab] 
+ OR telemonitor*[tiab])) 
+ NOT 
+(animals[mh] NOT humans[mh])
+
+Results:
+●	Initial: 3,742
+●	After English filter: 3,538
+B.	SCOPUS
+
+Date searched: September 14, 2025
+
+Search query: 
+TITLE-ABS-KEY ( "atrial fibrillation" OR AF ) 
+AND 
+TITLE-ABS-KEY ( persistent OR persistence OR "disease progression" OR progress* OR remodel* OR chronic ) 
+AND 
+TITLE-ABS-KEY ( multimodal* OR "multi modal" OR multisource OR "multi source" OR integrat* OR combined OR fusion 
+ OR "risk stratification" OR "risk assessment" OR "prediction model" OR "prognostic model" OR prognos* OR screen* 
+ OR classification OR scoring OR "decision support" OR algorithm* OR "machine learning" OR "artificial intelligence" OR "data driven" ) 
+AND 
+TITLE-ABS-KEY ( ECG OR electrocardiograph* OR echocardiograph* OR MRI OR "magnetic resonance imaging" OR CT 
+ OR "computed tomography" OR "cardiac imaging" OR imaging OR biomarker* OR BNP OR "NT-proBNP" OR troponin* 
+ OR proteomic* OR metabolomic* OR genomic* OR transcriptomic* OR "electronic health record*" OR EHR OR administrative 
+ OR claims OR registry OR device OR pacemaker* OR defibrillator* OR CIED OR "cardiac implantable electronic device" 
+ OR wearable* OR sensor* OR "mobile health" OR mHealth OR telemonitor* )
+
+Results:
+●	Initial: 11,587
+●	After English filter: 10,980
+C.	 IEEE
+
+Date searched: September 14, 2025
+
+Search query: 
+(ALL:"atrial fibrillation" OR ALL:AF) 
+AND 
+(ALL:multimodal OR ALL:"multi modal" OR ALL:multisource OR ALL:"multi source" OR ALL:integration 
+ OR ALL:integrative OR ALL:combined OR ALL:combination OR ALL:fusion OR ALL:"data fusion" 
+ OR ALL:"feature fusion" OR ALL:"sensor fusion" OR ALL:hybrid OR ALL:"hybrid model" 
+ OR ALL:"hybrid approach" OR ALL:"ensemble model" OR ALL:"ensemble learning" 
+ OR ALL:"multi view" OR ALL:"multi task" OR ALL:"joint model" OR ALL:"joint learning")
+
+Results:
+●	Initial: 32
+●	After English filter: 32
